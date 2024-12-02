@@ -88,7 +88,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-
+  p->priority = 10; // Default priority
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -319,41 +319,67 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
-void
-scheduler(void)
-{
-  struct proc *p;
-  struct cpu *c = mycpu();
-  c->proc = 0;
-  
-  for(;;){
-    // Enable interrupts on this processor.
-    sti();
+void scheduler(void) {
+    struct proc *p;
+    struct proc *highest_priority_proc;
+    struct cpu *c = mycpu();
+    c->proc = 0;
+    uint start_ticks;
+    const uint time_slice = 10;
 
-    // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+    for (;;) {
+        sti(); // Enable interrupts
+        acquire(&ptable.lock);
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+        highest_priority_proc = 0;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+        // Find the highest-priority RUNNABLE process
+        for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+            if (p->state != RUNNABLE) {
+                continue;
+            }
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+            if (highest_priority_proc == 0 || p->priority > highest_priority_proc->priority) {
+                highest_priority_proc = p;
+            }
+        }
+
+        if (highest_priority_proc != 0) {
+            p = highest_priority_proc;
+            start_ticks = ticks; // Record the current tick count
+            //cprintf("Process %d started at tick %d with priority %d\n", p->pid, start_ticks, p->priority);
+
+            // Switch to the selected process
+            c->proc = p;
+            switchuvm(p);
+            p->state = RUNNING;
+
+            swtch(&(c->scheduler), p->context);
+            switchkvm();
+
+            uint runtime = ticks - start_ticks;
+            //cprintf("Process %d ran for %d ticks (start: %d, end: %d)\n", p->pid, runtime, start_ticks, ticks);
+
+            if (runtime >= time_slice) {
+                //cprintf("Process %d preempted after %d ticks\n", p->pid, runtime);
+                if (p->state == RUNNING) {
+                    p->state = RUNNABLE;
+                }
+            } else if (p->state == RUNNING) {
+                //cprintf("Process %d voluntarily yielded after %d ticks\n", p->pid, runtime);
+            } else {
+                //cprintf("Process %d finished, ran for %d ticks\n", p->pid, runtime);
+            }
+
+            // Reset the CPU process pointer
+            c->proc = 0;
+        }
+
+        release(&ptable.lock);
     }
-    release(&ptable.lock);
-
-  }
 }
+
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores

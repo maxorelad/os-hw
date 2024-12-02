@@ -6,6 +6,13 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
+#include "spinlock.h"
+
+extern struct {
+    struct spinlock lock;
+    struct proc proc[NPROC];
+} ptable;
+
 
 int
 sys_fork(void)
@@ -89,3 +96,27 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int sys_hello(void) {
+    cprintf("Hello from xv6!\n");
+    return 0;
+}
+
+int sys_setpriority(void) {
+    int pid, priority;
+
+    if(argint(0, &pid) < 0 || argint(1, &priority) < 0)
+        return -1;
+
+    struct proc *p;
+    acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+        if(p->pid == pid) {
+            p->priority = priority;
+            break;
+        }
+    }
+    release(&ptable.lock);
+    return 0;
+}
+
